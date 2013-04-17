@@ -1,0 +1,5 @@
+Satisfy Any
+
+RewriteEngine On
+
+RewriteRule ^(categories|items)?$ index.php?noun=$1 [QSA]
