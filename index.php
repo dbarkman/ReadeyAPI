@@ -11,7 +11,7 @@ session_start();
 require_once dirname(__FILE__) . '/../../ReadeyFramework/includes/includes.php';
 
 $readeyAPI = new ReadeyAPI();
-$readeyAPI->validateAPIKey();
+$readeyAPI->validateAPICommon();
 
 if (isset($_REQUEST['noun'])) {
 	if ($_REQUEST['noun'] === 'testPass') {
@@ -19,7 +19,7 @@ if (isset($_REQUEST['noun'])) {
 
 	} else if ($_REQUEST['noun'] === 'categories') {
 		if ($_SERVER['REQUEST_METHOD'] == 'GET') {
-			$readeyAPI->getCategories();
+			$readeyAPI->getCategories($_REQUEST['uuid']);
 		} else {
 			$readeyAPI->badRequest();
 		}
@@ -27,11 +27,46 @@ if (isset($_REQUEST['noun'])) {
 	} else if ($_REQUEST['noun'] === 'items') {
 		if ($_SERVER['REQUEST_METHOD'] == 'GET') {
 			if (isset($_REQUEST['category'])) {
-				$readeyAPI->validateItemsCategory();
+				$readeyAPI->validateGetItems();
 				$readeyAPI->getItemsForCategory($_REQUEST['category']);
 			} else {
 				$readeyAPI->badRequest();
 			}
+		} else {
+			$readeyAPI->badRequest();
+		}
+
+	} else if ($_REQUEST['noun'] === 'readLog') {
+		if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+			$readeyAPI->validateReadLog();
+			$readLog = array(
+				'user' => $_REQUEST['uuid'],
+				'words' => $_REQUEST['words'],
+				'speed' => $_REQUEST['speed'],
+				'rssItemUuid' => $_REQUEST['rssItemUuid']
+			);
+			$readeyAPI->createReadLog($readLog);
+		} else {
+			$readeyAPI->badRequest();
+		}
+
+	} else if ($_REQUEST['noun'] === 'feedback') {
+		if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+			$readeyAPI->validateFeedback();
+			$readLog = array(
+				'user' => $_REQUEST['uuid'],
+				'feedbackType' => $_REQUEST['feedbackType'],
+				'description' => $_REQUEST['description'],
+				'email' => $_REQUEST['email']
+			);
+			$readeyAPI->createFeedback($readLog);
+		} else {
+			$readeyAPI->badRequest();
+		}
+
+	} else if ($_REQUEST['noun'] === 'feedbackConstants') {
+		if ($_SERVER['REQUEST_METHOD'] == 'GET') {
+			$readeyAPI->getFeedbackConstants();
 		} else {
 			$readeyAPI->badRequest();
 		}
@@ -72,6 +107,10 @@ class ReadeyAPI
 	private $_errorCode;
 	private $_response;
 
+	private $_page;
+	private $_totalPages;
+	private $_itemsPerPage;
+
 	private $_start;
 	private $_time;
 	private $_packageSize;
@@ -94,6 +133,10 @@ class ReadeyAPI
 		$this->_packageSize = null;
 		$this->_response = null;
 		$this->_responseType = 'json';
+
+		$this->_page = (isset($_REQUEST['page'])) ? $_REQUEST['page'] : 1;
+		$this->_totalPages = 1;
+		$this->_itemsPerPage = 10;
 
 		$container = new Container();
 
@@ -190,9 +233,9 @@ class ReadeyAPI
 	////////////////////////////// VALIDATION FUNCTIONS ///////////////////////////
 	///////////////////////////////////////////////////////////////////////////////
 
-	public function validateAPIKey()
+	public function validateAPICommon()
 	{
-		$this->_validation->validateAPIKey();
+		$this->_validation->validateAPICommon();
 		if ($this->_validation->getErrorCount() > 0) {
 			$errorCode = $this->_validation->getErrorCode();
 			if ($errorCode == 'invalidParameter') {
@@ -205,9 +248,25 @@ class ReadeyAPI
 		}
 	}
 
-	public function validateItemsCategory()
+	public function validateGetItems()
 	{
-		$this->_validation->validateItemsCategory();
+		$this->_validation->validateGetItems();
+		if ($this->_validation->getErrorCount() > 0) {
+			$this->validationFailed();
+		}
+	}
+
+	public function validateReadLog()
+	{
+		$this->_validation->validateReadLog();
+		if ($this->_validation->getErrorCount() > 0) {
+			$this->validationFailed();
+		}
+	}
+
+	public function validateFeedback()
+	{
+		$this->_validation->validateFeedback();
 		if ($this->_validation->getErrorCount() > 0) {
 			$this->validationFailed();
 		}
@@ -215,6 +274,7 @@ class ReadeyAPI
 
 	private function validationFailed()
 	{
+		http_response_code(400);
 		$errorCode = $this->_validation->getErrorCode();
 		$errors = $this->_validation->getErrors();
 		$friendlyError = $this->_validation->getFriendlyError();
@@ -255,11 +315,10 @@ class ReadeyAPI
 	////////////////////////////// CATEGORY FUNCTIONS /////////////////////////////
 	///////////////////////////////////////////////////////////////////////////////
 
-	public function getCategories()
+	public function getCategories($user)
 	{
 		http_response_code(200);
-		$categories = RSSFeed::GetFeedCategoriesForAPI();
-//		$response['categories']['data'] = $categories;
+		$categories = RSSCategory::GetCategoriesForAPI($user);
 		$response = $categories;
 		$this->echoResponse('none', array(), '', 'success', $response);
 		$this->completeRequest();
@@ -273,7 +332,6 @@ class ReadeyAPI
 	{
 		http_response_code(200);
 		$items = RSSItem::GetItemsForFeedForAPI($feed);
-//		$response['items']['data'] = $items;
 		$response = $items;
 		$this->echoResponse('none', array(), '', 'success', $response);
 		$this->completeRequest();
@@ -282,11 +340,105 @@ class ReadeyAPI
 	public function getItemsForCategory($category)
 	{
 		http_response_code(200);
-		$items = RSSItem::GetItemsForCategoryForAPI($category);
-//		$response['items']['data'] = $items;
+		$items = RSSItem::GetItemsForCategoryForAPI($category, $this->_page, $this->_itemsPerPage, $this->_uuid);
+		$this->_totalPages = $this->calculateTotalPages($items[0]);
+		array_shift($items);
 		$response = $items;
 		$this->echoResponse('none', array(), '', 'success', $response);
 		$this->completeRequest();
+	}
+
+	///////////////////////////////////////////////////////////////////////////////
+	////////////////////////////// READLOG FUNCTIONS //////////////////////////////
+	///////////////////////////////////////////////////////////////////////////////
+
+	public function createReadLog($readLog)
+	{
+		$date = time();
+		$readLogObject = new ReadLog($this->_logger, $this->_mySqlConnect->db);
+		$readLogObject->setUuid(UUID::getUUID());
+		$readLogObject->setCreated($date);
+		$readLogObject->setModified($date);
+		$readLogObject->setUser($readLog['user']);
+		$readLogObject->setWords($readLog['words']);
+		$readLogObject->setSpeed(round($readLog['speed'], 3));
+		$readLogObject->setRssItemUuid($readLog['rssItemUuid']);
+
+		if ($readLogObject->createReadLog() === FALSE) {
+			http_response_code(500);
+			$errorCode = 'readLogNotCreated';
+			$friendlyError = 'Read log could not be created.';
+			$errors = array($friendlyError);
+			$this->echoResponse($errorCode, $errors, $friendlyError, 'fail', (object)array());
+		} else {
+			http_response_code(201);
+			$this->echoResponse('none', array(), '', 'success', (object)array());
+		}
+		$this->completeRequest();
+	}
+
+	///////////////////////////////////////////////////////////////////////////////
+	////////////////////////////// FEEDBACK FUNCTIONS /////////////////////////////
+	///////////////////////////////////////////////////////////////////////////////
+
+	public function createFeedback($feedback)
+	{
+		$date = time();
+		$feedbackObject = new Feedback($this->_logger, $this->_mySqlConnect->db);
+		$feedbackObject->setUuid(UUID::getUUID());
+		$feedbackObject->setCreated($date);
+		$feedbackObject->setModified($date);
+		$feedbackObject->setUser($feedback['user']);
+		$feedbackObject->setEmail($feedback['email']);
+		$feedbackObject->setFeedbackType($feedback['feedbackType']);
+		$feedbackObject->setDescription($feedback['description']);
+
+		if ($feedbackObject->createFeedback() === FALSE) {
+			http_response_code(500);
+			$errorCode = 'feedbackNotCreated';
+			$friendlyError = 'Feedback could not be created.';
+			$errors = array($friendlyError);
+			$this->echoResponse($errorCode, $errors, $friendlyError, 'fail', (object)array());
+		} else {
+			http_response_code(201);
+			$this->echoResponse('none', array(), '', 'success', (object)array());
+		}
+		$this->completeRequest();
+	}
+
+	///////////////////////////////////////////////////////////////////////////////
+	////////////////////////////// CONSTANTS API FUNCTIONS ////////////////////////
+	///////////////////////////////////////////////////////////////////////////////
+
+	public function getFeedbackConstants()
+	{
+		http_response_code(200);
+
+		$feedbackSupportArray = array('An Idea', 'An Issue', 'A Question', 'A Compliment');
+		$voteForFeatureArray = array('Create My Own Feed', 'Offline Reading', 'Show Reading Stats', 'Create My Own Articles', 'Other');
+		$voteForSourcesArray = array('Pocket', 'Readability', 'Instapaper', 'Dropbox', 'Other');
+
+//		$constants = array(array('feedbackSupportConstants' => $feedbackSupportArray), array('vorForFeaturesConstants' => $voteForFeatureArray), array('votForSourcesConstants' => $voteForSourcesArray));
+		$constants = array($feedbackSupportArray, $voteForFeatureArray, $voteForSourcesArray);
+		$this->echoResponse('none', array(), '', 'success', $constants);
+		$this->completeRequest();
+	}
+
+	///////////////////////////////////////////////////////////////////////////////
+	////////////////////////////// UTILITY FUNCTIONS //////////////////////////////
+	///////////////////////////////////////////////////////////////////////////////
+
+	private function calculateTotalPages($itemCount)
+	{
+		$pages = ($itemCount / $this->_itemsPerPage);
+		$modulo = ($itemCount % $this->_itemsPerPage);
+
+		if ($modulo != 0) {
+			$pages++;
+			return $pages;
+		}
+
+		return $pages;
 	}
 
 	///////////////////////////////////////////////////////////////////////////////
@@ -311,6 +463,8 @@ class ReadeyAPI
 		$jsonResponse['friendlyError'] = $friendlyErrors;
 		$jsonResponse['result'] = $result;
 		$jsonResponse['count'] = count($data);
+		$jsonResponse['page'] = (int)$this->_page;
+		$jsonResponse['totalPages'] = (int)$this->_totalPages;
 		$jsonResponse['data'] = $data;
 		foreach ($errors as $error) {
 			$this->logIt('info', $error);
@@ -358,8 +512,10 @@ class ReadeyAPI
 
 		$countForRequest = 0;
 		$requestForLogging = '';
+		if (isset($_REQUEST['key'])) $_REQUEST['key'] = substr($_REQUEST['key'], 0, 8);
 		foreach ($_REQUEST as $key => $value) {
 			if ($countForRequest > 0) $requestForLogging .= ' - ';
+			$value = urldecode($value);
 			$requestForLogging .= $key . ': ' . $value;
 			$countForRequest++;
 		}
@@ -380,7 +536,7 @@ class ReadeyAPI
 			'memory' => $this->_memoryUsage,
 			'appVersion' => $this->_appVersion,
 			'platform' => $this->_platform,
-			'device' => $this->_device,
+			'device' => urldecode($this->_device),
 			'machine' => $this->_machine,
 			'osVersion' => $this->_osVersion,
 			'ip' => $this->_ip
