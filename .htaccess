@@ -2,4 +2,4 @@ Satisfy Any
 
 RewriteEngine On
 
-RewriteRule ^(categories|items|readLog|feedback|feedbackConstants)?$ index.php?noun=$1 [QSA]
+RewriteRule ^(categories|featuredCategories|newsCategories|sportsCategories|items|readLog|feedback|feedbackConstants)?$ index.php?noun=$1 [QSA]

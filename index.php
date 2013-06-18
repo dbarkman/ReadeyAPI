@@ -24,6 +24,27 @@ if (isset($_REQUEST['noun'])) {
 			$readeyAPI->badRequest();
 		}
 
+	} else if ($_REQUEST['noun'] === 'featuredCategories') {
+		if ($_SERVER['REQUEST_METHOD'] == 'GET') {
+			$readeyAPI->getFeaturedCategories($_REQUEST['uuid']);
+		} else {
+			$readeyAPI->badRequest();
+		}
+
+	} else if ($_REQUEST['noun'] === 'newsCategories') {
+		if ($_SERVER['REQUEST_METHOD'] == 'GET') {
+			$readeyAPI->getNewsCategories($_REQUEST['uuid']);
+		} else {
+			$readeyAPI->badRequest();
+		}
+
+	} else if ($_REQUEST['noun'] === 'sportsCategories') {
+		if ($_SERVER['REQUEST_METHOD'] == 'GET') {
+			$readeyAPI->getSportsCategories($_REQUEST['uuid']);
+		} else {
+			$readeyAPI->badRequest();
+		}
+
 	} else if ($_REQUEST['noun'] === 'items') {
 		if ($_SERVER['REQUEST_METHOD'] == 'GET') {
 			if (isset($_REQUEST['category'])) {
@@ -43,7 +64,8 @@ if (isset($_REQUEST['noun'])) {
 				'user' => $_REQUEST['uuid'],
 				'words' => $_REQUEST['words'],
 				'speed' => $_REQUEST['speed'],
-				'rssItemUuid' => $_REQUEST['rssItemUuid']
+				'rssItemUuid' => $_REQUEST['rssItemUuid'],
+				'rssCategory' => $_REQUEST['rssCategory']
 			);
 			$readeyAPI->createReadLog($readLog);
 		} else {
@@ -111,6 +133,8 @@ class ReadeyAPI
 	private $_totalPages;
 	private $_itemsPerPage;
 
+	private $_queryTime;
+
 	private $_start;
 	private $_time;
 	private $_packageSize;
@@ -137,6 +161,8 @@ class ReadeyAPI
 		$this->_page = (isset($_REQUEST['page'])) ? $_REQUEST['page'] : 1;
 		$this->_totalPages = 1;
 		$this->_itemsPerPage = 10;
+
+		$this->_queryTime = 0.0;
 
 		$container = new Container();
 
@@ -312,13 +338,40 @@ class ReadeyAPI
 	}
 
 	///////////////////////////////////////////////////////////////////////////////
-	////////////////////////////// CATEGORY FUNCTIONS /////////////////////////////
+	////////////////////////////// TOPLEVEL FUNCTIONS /////////////////////////////
 	///////////////////////////////////////////////////////////////////////////////
 
 	public function getCategories($user)
 	{
 		http_response_code(200);
 		$categories = RSSCategory::GetCategoriesForAPI($user);
+		$response = $categories;
+		$this->echoResponse('none', array(), '', 'success', $response);
+		$this->completeRequest();
+	}
+
+	public function getFeaturedCategories($user)
+	{
+		http_response_code(200);
+		$categories = RSSCategory::GetSelectCategoriesForAPI($user, 'featured');
+		$response = $categories;
+		$this->echoResponse('none', array(), '', 'success', $response);
+		$this->completeRequest();
+	}
+
+	public function getNewsCategories($user)
+	{
+		http_response_code(200);
+		$categories = RSSCategory::GetSelectCategoriesForAPI($user, 'news');
+		$response = $categories;
+		$this->echoResponse('none', array(), '', 'success', $response);
+		$this->completeRequest();
+	}
+
+	public function getSportsCategories($user)
+	{
+		http_response_code(200);
+		$categories = RSSCategory::GetSelectCategoriesForAPI($user, 'sports');
 		$response = $categories;
 		$this->echoResponse('none', array(), '', 'success', $response);
 		$this->completeRequest();
@@ -343,6 +396,8 @@ class ReadeyAPI
 		$items = RSSItem::GetItemsForCategoryForAPI($category, $this->_page, $this->_itemsPerPage, $this->_uuid);
 		$this->_totalPages = $this->calculateTotalPages($items[0]);
 		array_shift($items);
+		$this->_queryTime = $this->calculateTotalPages($items[0]);
+		array_shift($items);
 		$response = $items;
 		$this->echoResponse('none', array(), '', 'success', $response);
 		$this->completeRequest();
@@ -363,6 +418,7 @@ class ReadeyAPI
 		$readLogObject->setWords($readLog['words']);
 		$readLogObject->setSpeed(round($readLog['speed'], 3));
 		$readLogObject->setRssItemUuid($readLog['rssItemUuid']);
+		$readLogObject->setRssCategoryUuid($readLog['rssCategory']);
 
 		if ($readLogObject->createReadLog() === FALSE) {
 			http_response_code(500);
@@ -485,6 +541,7 @@ class ReadeyAPI
 		$this->_size = number_format($this->_packageSize);
 		$this->_memoryUsage = number_format(memory_get_usage());
 
+		$this->logIt('info', 'Query Time: ' . $this->_queryTime);
 		$this->logIt('info', 'Payload Time: ' . $this->_time);
 		$this->logIt('info', 'Payload Size: ' . $this->_size);
 		$this->logIt('info', 'Memory Usage: ' . $this->_memoryUsage);
@@ -531,6 +588,7 @@ class ReadeyAPI
 			'language' => $this->_language,
 			'httpStatus' => http_response_code(),
 			'errorCode' => $this->_errorCode,
+			'queryTime' => $this->_queryTime,
 			'time' => $this->_time,
 			'size' => $this->_size,
 			'memory' => $this->_memoryUsage,
